@@ -1,0 +1,306 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: A demo setup to update streaming manifest with signed URL params
+
+Parameters:
+  Origin:
+    Description: Domain name of content origin
+    Type: String
+    Default: origin.example.com
+  OriginPath:
+    Description: (optional) origin prefix URL
+    Type: String
+
+Outputs:
+  ViewerCloudFrontDomain:
+    Value: !GetAtt ViewerDistribution.DomainName
+    Description: Viewer CloudFront domain
+  KeyPairId:
+    Value: !Ref CFPKey
+    Description: Key-Pair-Id for signed URL
+
+Resources:
+  #Lambda@Edge Role
+  LambdaEdgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: AllowLambdaServiceToAssumeRole
+          Effect: Allow
+          Action:
+          - sts:AssumeRole
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+            - edgelambda.amazonaws.com
+  #Lambda@Edge Function
+  LambdaEdgeFunctionUpdateManifest:
+    Type: AWS::Serverless::Function
+    Properties:
+      InlineCode:
+        !Join
+        - ''
+        - - |
+            'use strict';
+            const https = require('https');
+            const AWS = require('aws-sdk');
+            const path = require('path');
+
+            exports.handler = (event, context, callback) => {
+                
+                const request = event.Records[0].cf.request;
+          - "    const domain = 'https://"
+          - !GetAtt ManifestDistribution.DomainName 
+          - |
+            ';
+                const viewerDomain = event.Records[0].cf.config.distributionDomainName;
+                
+                let response = {};
+                
+                //find dir for the m3u8
+                let dir = path.dirname(request.uri); 
+
+                let querystring = (request.querystring)?"?"+request.querystring:"";
+                
+                //request to 2nd CF to get cached m3u8 
+                https.get(domain+request.uri+querystring, (resp) => {
+                    
+                    //use same status code
+                    response.status = resp.statusCode;
+                    
+                    //respond with a few headers
+                    let headers = {
+                            "access-control-allow-origin": [{"key": "Access-Control-Allow-Origin", "value": "*"}],
+                            "content-type": [{"key": "Content-Type", "value": resp.headers["content-type"]||"text/html"}],
+                            "server": [{"key": "Server", "value": resp.headers["server"]||"Server"}]
+                    };
+                    
+                    response.headers = headers;
+                    
+                    //load response to <data>
+                    let data = "";
+                    
+                    resp.on('data', (chunk) => {
+                        data += chunk;
+                    });
+                    
+                    //create signed URL only for lines without initial #, or URI component
+                    let body = [];
+                    
+                    resp.on('end', () => {
+                        
+                        data.split("\n").forEach((elem)=> {
+                            
+                            if (elem.startsWith("#") ) {
+                                if(elem.indexOf("URI") != -1) { //URI component inline
+                                    var uriComponents = elem.substring(elem.indexOf("URI")).split("\"");
+                                    uriComponents[1] = signed(viewerDomain, dir, uriComponents[1]);
+                                    body.push(elem.substring(0,elem.indexOf("URI"))+uriComponents.join("\""));
+                                }
+                                else {
+                                    body.push(elem);
+                                }
+                            }
+                            else if(elem== "") {
+                                body.push(elem);
+                            }
+                            else {
+                                body.push(signed(viewerDomain, dir, elem));
+                            }
+                        });
+                        
+                        response.body = body.join('\n');
+                        callback(null, response);
+                    });
+                }).on('error', (err)=>{
+                    callback(
+                        null,
+                        {
+                            'status': '500',
+                            'statusDescrition': 'Server Error',
+                            'headers': {
+                                'content-type': [{'key': 'Content-Type', 'value': 'text/plain'}]
+                            },
+                            'body': 'Error reading content \n\n'+err
+                        }
+                    );
+                });
+                
+            };
+
+            function signed(domain, dir, file) {
+                
+          - '      let keyPairId = "'
+          - !Ref CFPKey 
+          - |
+            ";
+                let privateKey = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAyUDcfHUlULF/Nyf/VDQvSpJrDtN5erjAviLEU69AyHjgQbE8\nDToFf3AU/Y5uDPpdA++KehGvEP1uPvRbHYd0AAko331FnywjQsiW782JnURDU3JK\njGFhmV2KmhIoSW8FKjscUfYiCglONrdQA8Y0YnCVSz7bbwJ1DQ8TSoADe/b7efzz\nCtgcy5tRVmJ+4R/qtsDrtaVzXc3mMKjKxmcfDFtJmMPleNc1mZZ0ekL4c9ua/D3f\nkskzGx++pAWaJnNbyLdBBpRZwuyCMO9uIW0nMUTqgdEIjI7ucQBpe3BDlg6r4jVt\nrH0Q5qQnuaJf/ht8IarY/fg1F7cjprhoj+z3XQIDAQABAoIBAQC2npm0geSLdZU3\nqp7BfN0Q8Q4elP0dxDp6DjhSq6vAfhcY5UfVxLmqaz1Q3Aa21hTDdoEUxakzZJS+\noaNwhzJWufkR263qgvW4KybzkXH3eDMTrJlDCzayITSdHC7ce9aW/K51HUDEFK+Z\nbPw5gIiWbwy6C964u+UVJYHez4zZ1aZfs9MPNgcGNfrZCurPVeaoQ95yNVrgAjk8\n8XKa7ALMsuiRLyzFrAzJvYHW+hlMrNBRvJqmxy1tMatm9ZezawAVIY33j/2BGRct\nDC+e9Ae92rYopcmIT4zx4/qWdfdpuFxoJUkUCh14881EOzg8yt2K5ZI3W4mfjQOd\nONjuX0OhAoGBAPO012f7wqlQBO/r0oclBg/FpAIZ4CZboqFjyzQ7FoP7ktwY2wJT\nx1FfZxFklIeX+kI2ZWFy/tN9CU3LhV7qMB4ojiUNInoRD0Bz0L732ClizMZI7R8z\nqWPDYHNRAXOCiQtPvXPCIvjhCDCgNy8pxySdAenjop46mdc5sdrlFXFpAoGBANNn\nyu3PX3dY8Dh/14JcKFzBbl09CEYi8e/VBSjOObfvPupLWp1ybq9K4culM9cJqk1B\nVjYtURuAbFF6flWeh168wAVdgl11RJMB/pkS911+SW0XezKGBNGrpR3bq6cOuR/k\nV5/96Fr/211m4GT/sN8PG/YK3k3sZd4W5wq3KmPVAoGAPrXqN/ewv6C3pIUqR1xf\nku9opKHD7BroXl8viuEpigzSXZCHyrGEOIw0GWWoUrvoyeD1dX4B1Kn4GuykBSh9\n+US2TxJyLLb3Fb63mGxuUzf5OYzKd5zzmZhM2V+e3/pXCXIbbg4msaQ2V0zi5l/5\nvpIoS+cnkU/DBn7yJUGNowECgYEArqa+GO/Mn+3jL9o2MiVu1wqa4f6tGjx+gjQL\nuiV9u760zJ2KdC740Grd1f9ar5n1jzOeRM31hvH3Cu1W9+crURJA1W3maM2b5JOu\nQcpQgHX3tV/D0P61dn8Gv38e9boNKRLdbXk4AA4GrchzNB2lgvKZmBBsjhXyJqPn\nJowiQi0CgYAnpI26CiWsXMsNg6SBZg5KD0zPhuYFTYWHFUwt7Eb6c4S8fv4Mi4hm\narPyXRZqHSgj/4qAPep2p2AbM3JvnknkRsvt/s/TIGGdBD5u9SGu9p9mO9YmGsZI\nw3zOcBy4I78lrp6WA6ttPjO2iLeW4GOtn+mxMO7YG7np1Pk7oPXhhQ==\n-----END RSA PRIVATE KEY-----";
+                let duration = 300;
+                
+                let cf = new AWS.CloudFront.Signer(keyPairId, privateKey);
+                
+                let policy = JSON.stringify({
+                    Statement: [{
+                        Resource: 'http*://'+ domain+path.posix.join(dir,file),
+                        Condition: {
+                            DateLessThan: {
+                                'AWS:EpochTime': 
+                                Math.floor(new Date().getTime() / 1000) + duration
+                            }
+                        }
+                    }]
+                });
+                
+                let signedUrl= cf.getSignedUrl({'url': 'https://'+ domain+path.posix.join(dir,file), 'policy': policy});
+                
+                let qry = signedUrl.split('?').pop();
+                
+                return file+'?'+qry;
+            }
+      Role: !GetAtt LambdaEdgeRole.Arn
+      Runtime: nodejs14.x
+      Handler: index.handler
+      Timeout: 5
+      AutoPublishAlias: live
+  #Public Key
+  CFPKey:
+    Type: 'AWS::CloudFront::PublicKey'
+    Properties:
+      PublicKeyConfig:
+        CallerReference: 'pubkey-cfn-template'
+        Comment: Public Key for signed URL
+        EncodedKey: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyUDcfHUlULF/Nyf/VDQv
+          SpJrDtN5erjAviLEU69AyHjgQbE8DToFf3AU/Y5uDPpdA++KehGvEP1uPvRbHYd0
+          AAko331FnywjQsiW782JnURDU3JKjGFhmV2KmhIoSW8FKjscUfYiCglONrdQA8Y0
+          YnCVSz7bbwJ1DQ8TSoADe/b7efzzCtgcy5tRVmJ+4R/qtsDrtaVzXc3mMKjKxmcf
+          DFtJmMPleNc1mZZ0ekL4c9ua/D3fkskzGx++pAWaJnNbyLdBBpRZwuyCMO9uIW0n
+          MUTqgdEIjI7ucQBpe3BDlg6r4jVtrH0Q5qQnuaJf/ht8IarY/fg1F7cjprhoj+z3
+          XQIDAQAB
+          -----END PUBLIC KEY-----
+        Name: !Sub '${AWS::StackName}-Public-Key'
+  #Key Group
+  CFKeyGroup:
+    Type: 'AWS::CloudFront::KeyGroup'
+    Properties:
+      KeyGroupConfig:
+        Comment: Key Group includes public key
+        Items:
+          - !Ref CFPKey
+        Name: !Sub '${AWS::StackName}-Key-Group'
+  #CF Function (adding CORS response header)
+  CFFunctionCORS:
+    Type: AWS::CloudFront::Function
+    Properties: 
+      AutoPublish: true
+      FunctionCode: |
+        function handler(event) {
+          var response = event.response;
+          var headers = response.headers;
+          headers['access-control-allow-origin'] = { value: '*'};
+          return response;
+        }
+      FunctionConfig: 
+          Comment: !Sub '${AWS::StackName}-CF Function for CORS header'
+          Runtime: 'cloudfront-js-1.0'
+      Name: !Sub '${AWS::StackName}-CFF-CORS'
+  #Viewer Distribution
+  ViewerDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${AWS::StackName}-Viewer-Distribution'
+        Origins:
+          - Id: Content-Origin
+            DomainName: !Ref Origin
+            OriginPath: !Ref OriginPath
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: 'match-viewer'
+              OriginSSLProtocols: ['TLSv1.2']
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+            ConnectionAttempts: 3
+            ConnectionTimeout: 10
+            OriginShield:
+              Enabled: false
+        DefaultRootObject: ''
+        HttpVersion: 'http1.1'
+        DefaultCacheBehavior:
+          TargetOriginId: Content-Origin
+          ViewerProtocolPolicy: 'redirect-to-https'
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" ##Cache Optimized
+          FunctionAssociations:
+            - EventType: 'viewer-response'
+              FunctionARN: !GetAtt CFFunctionCORS.FunctionARN
+          Compress: true
+          TrustedKeyGroups:
+            - !Ref CFKeyGroup
+        CacheBehaviors:
+          - AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" ##Cache Disabled
+            OriginRequestPolicyId: "216adef6-5c7f-47e4-b989-5492eafa07d3" ## Forward all
+            Compress: true
+            LambdaFunctionAssociations: 
+              - EventType: 'origin-request'
+                IncludeBody: false
+                LambdaFunctionARN: !Ref LambdaEdgeFunctionUpdateManifest.Version
+            PathPattern: '*.m3u8'
+            TargetOriginId: Content-Origin
+            TrustedKeyGroups: 
+              - !Ref CFKeyGroup
+            ViewerProtocolPolicy: 'redirect-to-https'
+
+  #Manifest Distribution
+  ManifestDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${AWS::StackName}-Manifest-Distribution'
+        Origins:
+          - Id: Content-Origin
+            DomainName: !Ref Origin
+            OriginPath: !Ref OriginPath
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: 'match-viewer'
+              OriginSSLProtocols: ['TLSv1.2']
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+            ConnectionAttempts: 3
+            ConnectionTimeout: 10
+            OriginShield:
+              Enabled: false
+        DefaultRootObject: ''
+        HttpVersion: 'http1.1'
+        DefaultCacheBehavior:
+          TargetOriginId: Content-Origin
+          ViewerProtocolPolicy: 'redirect-to-https'
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" ##Cache Optimized
+          Compress: true
+          TrustedKeyGroups:
+            - !Ref CFKeyGroup
+        CacheBehaviors:
+          - AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" ##Cache Optimized
+            Compress: true
+            PathPattern: '*.m3u8'
+            TargetOriginId: Content-Origin
+            ViewerProtocolPolicy: 'redirect-to-https'
+
