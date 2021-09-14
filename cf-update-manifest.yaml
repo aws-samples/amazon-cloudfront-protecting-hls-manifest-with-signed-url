@@ -1,3 +1,5 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: 2010-09-09
 Transform: AWS::Serverless-2016-10-31
 Description: A demo setup to update streaming manifest with signed URL params
@@ -10,6 +12,14 @@ Parameters:
   OriginPath:
     Description: (optional) origin prefix URL
     Type: String
+  AddCORSResponse:
+    Description: (optional) add CORS header Access-Control-Allow-Origin:*
+    Type: String
+    Default: Yes
+    AllowedValues: [Yes, No]
+
+Conditions:
+  CORSResponse: !Equals [!Ref AddCORSResponse, Yes]
 
 Outputs:
   ViewerCloudFrontDomain:
@@ -20,8 +30,8 @@ Outputs:
     Description: Key-Pair-Id for signed URL
 
 Resources:
-  #Lambda@Edge Role
-  LambdaEdgeRole:
+  #Lambda@Edge Role for manifest rewriting manifest
+  LambdaEdgeRoleUpdateManifest:
     Type: AWS::IAM::Role
     Properties:
       Path: /
@@ -38,10 +48,11 @@ Resources:
             Service:
             - lambda.amazonaws.com
             - edgelambda.amazonaws.com
-  #Lambda@Edge Function
+  #Lambda@Edge Function manifest
   LambdaEdgeFunctionUpdateManifest:
     Type: AWS::Serverless::Function
     Properties:
+      Description: update manifest file to add signed URL
       InlineCode:
         !Join
         - ''
@@ -75,7 +86,9 @@ Resources:
                     
                     //respond with a few headers
                     let headers = {
-                            "access-control-allow-origin": [{"key": "Access-Control-Allow-Origin", "value": "*"}],
+          - !If [CORSResponse, '                "access-control-allow-origin": [{"key": "Access-Control-Allow-Origin", "value": "*"}],', '']
+          - |
+            //                            
                             "content-type": [{"key": "Content-Type", "value": resp.headers["content-type"]||"text/html"}],
                             "server": [{"key": "Server", "value": resp.headers["server"]||"Server"}]
                     };
@@ -135,7 +148,7 @@ Resources:
 
             function signed(domain, dir, file) {
                 
-          - '      let keyPairId = "'
+          - '   let keyPairId = "'
           - !Ref CFPKey 
           - |
             ";
@@ -162,7 +175,48 @@ Resources:
                 
                 return file+'?'+qry;
             }
-      Role: !GetAtt LambdaEdgeRole.Arn
+      Role: !GetAtt LambdaEdgeRoleUpdateManifest.Arn
+      Runtime: nodejs14.x
+      Handler: index.handler
+      Timeout: 5
+      AutoPublishAlias: live
+  #Lambda@Edge Role for add CORS header to segments
+  LambdaEdgeRoleAddCORS:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: AllowLambdaServiceToAssumeRole
+          Effect: Allow
+          Action:
+          - sts:AssumeRole
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+            - edgelambda.amazonaws.com
+  #Lambda@Edge Function manifest
+  LambdaEdgeFunctionAddCORS:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: add CORS header to the response
+      InlineCode:
+        |
+        'use strict';
+        
+        exports.handler = (event, context, callback) => {
+            
+            const response = event.Records[0].cf.response;
+            const headers = response.headers;
+
+            headers['access-control-allow-origin'] = [{value: "*"}];
+
+            callback(null, response);
+        };
+      Role: !GetAtt LambdaEdgeRoleAddCORS.Arn
       Runtime: nodejs14.x
       Handler: index.handler
       Timeout: 5
@@ -172,7 +226,7 @@ Resources:
     Type: 'AWS::CloudFront::PublicKey'
     Properties:
       PublicKeyConfig:
-        CallerReference: 'pubkey-cfn-template'
+        CallerReference: !Sub '${AWS::StackName}-pubkey-cfn-template'
         Comment: Public Key for signed URL
         EncodedKey: |
           -----BEGIN PUBLIC KEY-----
@@ -194,22 +248,6 @@ Resources:
         Items:
           - !Ref CFPKey
         Name: !Sub '${AWS::StackName}-Key-Group'
-  #CF Function (adding CORS response header)
-  CFFunctionCORS:
-    Type: AWS::CloudFront::Function
-    Properties: 
-      AutoPublish: true
-      FunctionCode: |
-        function handler(event) {
-          var response = event.response;
-          var headers = response.headers;
-          headers['access-control-allow-origin'] = { value: '*'};
-          return response;
-        }
-      FunctionConfig: 
-          Comment: !Sub '${AWS::StackName}-CF Function for CORS header'
-          Runtime: 'cloudfront-js-1.0'
-      Name: !Sub '${AWS::StackName}-CFF-CORS'
   #Viewer Distribution
   ViewerDistribution:
     Type: 'AWS::CloudFront::Distribution'
@@ -240,9 +278,13 @@ Resources:
           AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
           CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" ##Cache Optimized
-          FunctionAssociations:
-            - EventType: 'viewer-response'
-              FunctionARN: !GetAtt CFFunctionCORS.FunctionARN
+          LambdaFunctionAssociations: 
+            !If
+              - CORSResponse
+              - - EventType: 'origin-response'
+                  IncludeBody: false
+                  LambdaFunctionARN: !Ref LambdaEdgeFunctionAddCORS.Version
+              - !Ref AWS::NoValue
           Compress: true
           TrustedKeyGroups:
             - !Ref CFKeyGroup
@@ -261,7 +303,6 @@ Resources:
             TrustedKeyGroups: 
               - !Ref CFKeyGroup
             ViewerProtocolPolicy: 'redirect-to-https'
-
   #Manifest Distribution
   ManifestDistribution:
     Type: 'AWS::CloudFront::Distribution'
@@ -303,4 +344,3 @@ Resources:
             PathPattern: '*.m3u8'
             TargetOriginId: Content-Origin
             ViewerProtocolPolicy: 'redirect-to-https'
-
