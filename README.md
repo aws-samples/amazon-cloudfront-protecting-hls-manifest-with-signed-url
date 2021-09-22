@@ -79,7 +79,7 @@ bash: `awk 'NF {sub(/\r/,""); printf "%s\\n", $0;}' CF-priv-key.pem`
 1. 'Create stack' with 'Upload a template file' option. Choose the `protect_hls.yaml` file as the template.
 1. 
 
-# implementation
+# Implementation
 
 There are 2 CloudFront distributions, one is called as viewer distribution, and another is manifest distribution.  
 Viewer distribution will deliver all of the streaming to end user, while manifest distribution is used only to cache manifest files.  
