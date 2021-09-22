@@ -152,7 +152,7 @@ Resources:
           - !Ref CFPKey 
           - |
             ";
-                let privateKey = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAyUDcfHUlULF/Nyf/VDQvSpJrDtN5erjAviLEU69AyHjgQbE8\nDToFf3AU/Y5uDPpdA++KehGvEP1uPvRbHYd0AAko331FnywjQsiW782JnURDU3JK\njGFhmV2KmhIoSW8FKjscUfYiCglONrdQA8Y0YnCVSz7bbwJ1DQ8TSoADe/b7efzz\nCtgcy5tRVmJ+4R/qtsDrtaVzXc3mMKjKxmcfDFtJmMPleNc1mZZ0ekL4c9ua/D3f\nkskzGx++pAWaJnNbyLdBBpRZwuyCMO9uIW0nMUTqgdEIjI7ucQBpe3BDlg6r4jVt\nrH0Q5qQnuaJf/ht8IarY/fg1F7cjprhoj+z3XQIDAQABAoIBAQC2npm0geSLdZU3\nqp7BfN0Q8Q4elP0dxDp6DjhSq6vAfhcY5UfVxLmqaz1Q3Aa21hTDdoEUxakzZJS+\noaNwhzJWufkR263qgvW4KybzkXH3eDMTrJlDCzayITSdHC7ce9aW/K51HUDEFK+Z\nbPw5gIiWbwy6C964u+UVJYHez4zZ1aZfs9MPNgcGNfrZCurPVeaoQ95yNVrgAjk8\n8XKa7ALMsuiRLyzFrAzJvYHW+hlMrNBRvJqmxy1tMatm9ZezawAVIY33j/2BGRct\nDC+e9Ae92rYopcmIT4zx4/qWdfdpuFxoJUkUCh14881EOzg8yt2K5ZI3W4mfjQOd\nONjuX0OhAoGBAPO012f7wqlQBO/r0oclBg/FpAIZ4CZboqFjyzQ7FoP7ktwY2wJT\nx1FfZxFklIeX+kI2ZWFy/tN9CU3LhV7qMB4ojiUNInoRD0Bz0L732ClizMZI7R8z\nqWPDYHNRAXOCiQtPvXPCIvjhCDCgNy8pxySdAenjop46mdc5sdrlFXFpAoGBANNn\nyu3PX3dY8Dh/14JcKFzBbl09CEYi8e/VBSjOObfvPupLWp1ybq9K4culM9cJqk1B\nVjYtURuAbFF6flWeh168wAVdgl11RJMB/pkS911+SW0XezKGBNGrpR3bq6cOuR/k\nV5/96Fr/211m4GT/sN8PG/YK3k3sZd4W5wq3KmPVAoGAPrXqN/ewv6C3pIUqR1xf\nku9opKHD7BroXl8viuEpigzSXZCHyrGEOIw0GWWoUrvoyeD1dX4B1Kn4GuykBSh9\n+US2TxJyLLb3Fb63mGxuUzf5OYzKd5zzmZhM2V+e3/pXCXIbbg4msaQ2V0zi5l/5\nvpIoS+cnkU/DBn7yJUGNowECgYEArqa+GO/Mn+3jL9o2MiVu1wqa4f6tGjx+gjQL\nuiV9u760zJ2KdC740Grd1f9ar5n1jzOeRM31hvH3Cu1W9+crURJA1W3maM2b5JOu\nQcpQgHX3tV/D0P61dn8Gv38e9boNKRLdbXk4AA4GrchzNB2lgvKZmBBsjhXyJqPn\nJowiQi0CgYAnpI26CiWsXMsNg6SBZg5KD0zPhuYFTYWHFUwt7Eb6c4S8fv4Mi4hm\narPyXRZqHSgj/4qAPep2p2AbM3JvnknkRsvt/s/TIGGdBD5u9SGu9p9mO9YmGsZI\nw3zOcBy4I78lrp6WA6ttPjO2iLeW4GOtn+mxMO7YG7np1Pk7oPXhhQ==\n-----END RSA PRIVATE KEY-----";
+                let privateKey = "<PASTE YOUR PRIVATE KEY HERE>";
                 let duration = 300;
                 
                 let cf = new AWS.CloudFront.Signer(keyPairId, privateKey);
@@ -229,15 +229,7 @@ Resources:
         CallerReference: !Sub '${AWS::StackName}-pubkey-cfn-template'
         Comment: Public Key for signed URL
         EncodedKey: |
-          -----BEGIN PUBLIC KEY-----
-          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyUDcfHUlULF/Nyf/VDQv
-          SpJrDtN5erjAviLEU69AyHjgQbE8DToFf3AU/Y5uDPpdA++KehGvEP1uPvRbHYd0
-          AAko331FnywjQsiW782JnURDU3JKjGFhmV2KmhIoSW8FKjscUfYiCglONrdQA8Y0
-          YnCVSz7bbwJ1DQ8TSoADe/b7efzzCtgcy5tRVmJ+4R/qtsDrtaVzXc3mMKjKxmcf
-          DFtJmMPleNc1mZZ0ekL4c9ua/D3fkskzGx++pAWaJnNbyLdBBpRZwuyCMO9uIW0n
-          MUTqgdEIjI7ucQBpe3BDlg6r4jVtrH0Q5qQnuaJf/ht8IarY/fg1F7cjprhoj+z3
-          XQIDAQAB
-          -----END PUBLIC KEY-----
+          <PASTE YOUR PUBLIC KEY HERE>
         Name: !Sub '${AWS::StackName}-Public-Key'
   #Key Group
   CFKeyGroup:
